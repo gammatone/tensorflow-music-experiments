@@ -1,2 +1,2 @@
-# tensorflow-vae-experiments
-Experiments on Variational Autoencoder intended to work with audio data
+# tensorflow-music-experiments
+Machine Learning experiments using TensorFlow intended to work with audio and musical data
