@@ -34,7 +34,7 @@ def bufferize_array(in_array, chunk_size, hop_size, start_index=0, end_index=Non
     """
     if end_index is None:
         end_index = in_array.shape[0]
-    chunks_nb = (end_index - start_index - chunk_size) // hop_size + 1
+    chunks_nb = (end_index - start_index + hop_size - chunk_size) // hop_size
     chunks_array = np.zeros((chunks_nb, chunk_size) + in_array.shape[1:], dtype=in_array.dtype)
     for i in range(chunks_nb):
         chunks_array[i] = in_array[i*hop_size + start_index: i*hop_size + start_index + chunk_size]

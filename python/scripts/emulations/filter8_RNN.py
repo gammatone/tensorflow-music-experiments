@@ -33,21 +33,29 @@ root_dir = os.path.abspath(os.path.join(root_dir, os.pardir))
 sys.path.append(os.path.join(root_dir, "python/modules/"))
 
 # Custom imports
-from dataset_utils import create_pkl_audio_dataset, get_dict_from_pkl
+from dataset_utils import create_pkl_audio_dataset, get_dict_from_pkl, stack_array_from_dict_lastaxis
 from plot_utils import plot_by_key
+from array_utils import bufferize_array
+from NN_utils import create_RNN, optimizer_call
+
+
+# Comment this line if you have CUDA installed
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 def main():
     """
     Main routine
     """
     # define plot flags
-    need_plot = True
+    need_plot = False
 
     # define audio parameters
     sr = 44100
 
     # Define signal keys
-    signal_keys = ["signal_in", "signal_filtered", "cutoff", "resonance"]
+    input_signal_keys = ["signal_in", "cutoff", "resonance"]
+    output_signal_keys = ["signal_filtered"]
+    signal_keys = input_signal_keys + output_signal_keys
 
     # define pickle directories (where the pickle files are located)
     pkl_dir = os.path.join(root_dir, "data/pickle/filter8_rec")
@@ -67,6 +75,7 @@ def main():
             # Create pickle dictionary
             create_pkl_audio_dataset(my_audio_dirs[i], pkl_dir, my_pkl_filenames[i], keynames=signal_keys, sr=sr)
 
+    ## RAW DATA LOADING ##
     # Load pickle files
     train_dict = get_dict_from_pkl(os.path.join(pkl_dir, pkl_train_filename))
     test_dict = get_dict_from_pkl(os.path.join(pkl_dir, pkl_test_filename))
@@ -76,6 +85,54 @@ def main():
                     start_idx=int(5e4), end_idx=int(5.1e4))
         plot_by_key(test_dict, test_dict.keys(), title="Extract from test dataset",
                     start_idx=int(2e4), end_idx=int(2.1e4))
+
+    ## DATA FORMATING FOR RNN ##
+    # Training hyper parameters
+    IN_SEQ_LENGTH = 256
+    HOP_SIZE = 256
+    N_FEATURES = 3
+    OUT_SEQ_LENGTH = 256
+    BATCH_SIZE = 128
+    EPOCHS = 100
+    # Prepare training set
+    # For RNN, friendly training format is:
+    #        x.shape = (n_chunks, IN_SEQ_LENGTH, N_FEATURES) ; y.shape = (n_chunks, OUT_SEQ_LENGTH, N_FEATURES))
+    # So stack inputs on last axis
+    x_train_stack = stack_array_from_dict_lastaxis(train_dict, input_signal_keys)
+    y_train_stack = stack_array_from_dict_lastaxis(train_dict, output_signal_keys)
+    x_train_chunks = bufferize_array(x_train_stack, IN_SEQ_LENGTH, hop_size=HOP_SIZE)
+    y_train_chunks = bufferize_array(y_train_stack, OUT_SEQ_LENGTH, hop_size=HOP_SIZE,
+                                        start_index=IN_SEQ_LENGTH - OUT_SEQ_LENGTH)
+
+    # Prepare testing set
+    x_test_stack = stack_array_from_dict_lastaxis(test_dict, input_signal_keys)
+    y_test_stack = stack_array_from_dict_lastaxis(test_dict, output_signal_keys)
+    x_test_chunks = bufferize_array(x_test_stack, IN_SEQ_LENGTH, hop_size=HOP_SIZE,
+                                    start_index=0, end_index=5*sr)
+    y_test_chunks = bufferize_array(y_test_stack, OUT_SEQ_LENGTH, hop_size=HOP_SIZE,
+                                        start_index=IN_SEQ_LENGTH - OUT_SEQ_LENGTH,
+                                        end_index=5*sr)
+
+    ## MODEL TRAINING ##
+    # Define STATELESS RNN model
+    model = create_RNN(IN_SEQ_LENGTH, OUT_SEQ_LENGTH, n_features=N_FEATURES, stateful=False)
+    model.summary()
+    # Compile model with optimizer and loss
+    optimizer = optimizer_call(lr=1e-3)
+    model.compile(loss="mse", optimizer=optimizer)
+
+    training_state = model.fit(x_train_chunks, y_train_chunks, shuffle=True,
+                                epochs=EPOCHS, batch_size=BATCH_SIZE,
+                                validation_data=(x_test_chunks, y_test_chunks),
+                                validation_freq=1,
+                                )
+
+
+    # ## MODEL TESTING ##
+    # # Do some predictions on the test set
+    # prediction_array = model.predict(x_test_chunks)
+    # test_dict = {}
+    # test_dict["signal_in"] = x_te
 
     return
 

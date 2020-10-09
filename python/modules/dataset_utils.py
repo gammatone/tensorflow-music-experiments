@@ -12,6 +12,7 @@ Module gathering useful functions for dataset handling.
 import os
 
 import pickle
+import numpy as np
 
 # Custom imports
 from dsp_utils import librosa_load_wav
@@ -43,4 +44,16 @@ def get_dict_from_pkl(pkl_path):
     """
     with open(pkl_path, 'rb') as f:
         loaded_dict = pickle.load(f)
-    return loaded_dict 
+    return loaded_dict
+
+def stack_array_from_dict_lastaxis(data_dict, keys):
+    """
+    Stack array present in dictionary in a numpy array.
+    NB arrays have to have same shape and same type
+    """
+    # Prepare new shape
+    stacked_array = data_dict[keys[0]][:]
+    stacked_array = np.expand_dims(stacked_array, axis=-1)
+    for i in range(1, len(keys)):
+        stacked_array = np.concatenate([stacked_array, np.expand_dims(data_dict[keys[i]], axis=-1)], axis=-1)
+    return stacked_array[:]
