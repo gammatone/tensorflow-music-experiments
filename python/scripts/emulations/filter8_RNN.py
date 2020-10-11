@@ -35,19 +35,20 @@ sys.path.append(os.path.join(root_dir, "python/modules/"))
 # Custom imports
 from dataset_utils import create_pkl_audio_dataset, get_dict_from_pkl, stack_array_from_dict_lastaxis
 from plot_utils import plot_by_key
-from array_utils import bufferize_array
+from array_utils import bufferize_array, unbufferize_array
 from NN_utils import create_RNN, optimizer_call
+from dsp_utils import librosa_write_wav
 
 
 # Comment this line if you have CUDA installed
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+# os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 def main():
     """
     Main routine
     """
     # define plot flags
-    need_plot = False
+    need_plot = True
 
     # define audio parameters
     sr = 44100
@@ -66,6 +67,7 @@ def main():
     audio_dir = os.path.join(root_dir, "data/audio/filter8_rec")
     audio_train_dir = os.path.join(audio_dir, "white_noise")
     audio_test_dir = os.path.join(audio_dir, "saw_wave")
+    audio_out_dir = os.path.join(audio_dir, "inference")
     my_audio_dirs = (audio_train_dir, audio_test_dir)
 
     # Save to pickle if dataset does not exist yet
@@ -88,12 +90,12 @@ def main():
 
     ## DATA FORMATING FOR RNN ##
     # Training hyper parameters
-    IN_SEQ_LENGTH = 256
-    HOP_SIZE = 256
+    IN_SEQ_LENGTH = 128
+    HOP_SIZE = 128
     N_FEATURES = 3
-    OUT_SEQ_LENGTH = 256
-    BATCH_SIZE = 128
-    EPOCHS = 100
+    OUT_SEQ_LENGTH = 128
+    BATCH_SIZE = 256
+    EPOCHS = 500
     # Prepare training set
     # For RNN, friendly training format is:
     #        x.shape = (n_chunks, IN_SEQ_LENGTH, N_FEATURES) ; y.shape = (n_chunks, OUT_SEQ_LENGTH, N_FEATURES))
@@ -108,10 +110,10 @@ def main():
     x_test_stack = stack_array_from_dict_lastaxis(test_dict, input_signal_keys)
     y_test_stack = stack_array_from_dict_lastaxis(test_dict, output_signal_keys)
     x_test_chunks = bufferize_array(x_test_stack, IN_SEQ_LENGTH, hop_size=HOP_SIZE,
-                                    start_index=0, end_index=5*sr)
+                                    start_index=0, end_index=None)
     y_test_chunks = bufferize_array(y_test_stack, OUT_SEQ_LENGTH, hop_size=HOP_SIZE,
                                         start_index=IN_SEQ_LENGTH - OUT_SEQ_LENGTH,
-                                        end_index=5*sr)
+                                        end_index=None)
 
     ## MODEL TRAINING ##
     # Define STATELESS RNN model
@@ -124,15 +126,30 @@ def main():
     training_state = model.fit(x_train_chunks, y_train_chunks, shuffle=True,
                                 epochs=EPOCHS, batch_size=BATCH_SIZE,
                                 validation_data=(x_test_chunks, y_test_chunks),
-                                validation_freq=1,
+                                validation_freq=3,
                                 )
 
 
-    # ## MODEL TESTING ##
-    # # Do some predictions on the test set
-    # prediction_array = model.predict(x_test_chunks)
-    # test_dict = {}
-    # test_dict["signal_in"] = x_te
+    ## MODEL TESTING ##
+    # Do some predictions on the test set
+    prediction_array = model.predict(x_test_chunks)
+    test_dict = {}
+    stacked_inputs = unbufferize_array(x_test_chunks, HOP_SIZE)
+    print(stacked_inputs.shape)
+    test_dict["signal_in"] = stacked_inputs[:,0]
+    test_dict["cutoff"] = stacked_inputs[:,1]
+    test_dict["resonance"] = stacked_inputs[:,2]
+    test_dict["groundtruth"] = unbufferize_array(y_test_chunks, HOP_SIZE)
+    test_dict["model_predictions"] = unbufferize_array(prediction_array, HOP_SIZE)
+
+    if need_plot:
+        plot_by_key(test_dict, test_dict.keys(), title="Model evaluation after training")
+
+    # Save to audio file
+    if not os.path.exists(audio_out_dir):
+        os.makedirs(audio_out_dir)
+    savefilepath = os.path.join(audio_out_dir, "infered_data.wav")
+    librosa_write_wav(test_dict["model_predictions"], savefilepath, sr=sr)
 
     return
 

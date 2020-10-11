@@ -19,6 +19,12 @@ def librosa_load_wav(filepath, sr=22050):
 
     Returns
         raw_array (np_array)
-        sr (int):               samplerate value    
+        sr (int):               samplerate value
     """
     return librosa.load(filepath, sr=sr)
+
+def librosa_write_wav(np_array, savepath, sr=22050):
+	"""
+	Write wav file (using librosa) into numpy array
+	"""
+	librosa.output.write_wav(savepath, np_array, sr=sr)

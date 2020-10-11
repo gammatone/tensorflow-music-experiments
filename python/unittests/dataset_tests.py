@@ -87,5 +87,37 @@ class TestAudioDatasets(unittest.TestCase):
         chunk_array = bufferize_array(test_array[:-2], chunk_size=3, hop_size=2)
         self.assertTrue(np.array_equal(chunk_array, np.array([[1,2,3], [3,4,5], [5,6,7]])))
 
+    def test_bufferize_stacked(self):
+        from array_utils import bufferize_array
+        array1 = np.array([1,2,3,4,5,6,7,8,9])
+        array2 = np.array([10,20,30,40,50,60,70,80,90])
+        stacked_array = np.stack([array1, array2], axis=1)
+        chunk_array1 = bufferize_array(array1, chunk_size=4, hop_size=2)
+        chunk_array2 = bufferize_array(array2, chunk_size=4, hop_size=2)
+        chunk_stacked_array = bufferize_array(stacked_array, chunk_size=4, hop_size=2)
+        self.assertTrue(np.array_equal(chunk_stacked_array, np.stack([chunk_array1, chunk_array2], axis=2)))
+
+    def test_unbufferize_array(self):
+        from array_utils import bufferize_array, unbufferize_array
+        test_array = np.array([1,2,3,4,5,6,7,8,9])
+        chunk_array1 = bufferize_array(test_array, chunk_size=4, hop_size=2)
+        chunk_array2 = bufferize_array(test_array, chunk_size=3, hop_size=2)
+        unbuff_array1 = unbufferize_array(chunk_array1, hop_size=2)
+        unbuff_array2 = unbufferize_array(chunk_array2, hop_size=2)
+        self.assertTrue(np.array_equal(test_array[:-1], unbuff_array1))
+        self.assertTrue(np.array_equal(test_array, unbuff_array2))
+
+    def test_unbufferize_stacked(self):
+        from array_utils import bufferize_array, unbufferize_array
+        array1 = np.array([1,2,3,4,5,6,7,8,9])
+        array2 = np.array([10,20,30,40,50,60,70,80,90])
+        test_array = np.stack([array1, array2], axis=1)
+        chunk_array1 = bufferize_array(test_array, chunk_size=4, hop_size=2)
+        chunk_array2 = bufferize_array(test_array, chunk_size=3, hop_size=2)
+        unbuff_array1 = unbufferize_array(chunk_array1, hop_size=2)
+        unbuff_array2 = unbufferize_array(chunk_array2, hop_size=2)
+        self.assertTrue(np.array_equal(test_array[:-1], unbuff_array1))
+        self.assertTrue(np.array_equal(test_array, unbuff_array2))
+
 suite = unittest.TestLoader().loadTestsFromTestCase(TestAudioDatasets)
 unittest.TextTestRunner(verbosity=2).run(suite)

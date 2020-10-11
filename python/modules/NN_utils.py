@@ -29,7 +29,7 @@ def create_RNN(in_seq_length, out_seq_length, n_features, stateful=False, batch_
 	Returns a keras model.
 	"""
 	rnn_model = tf.keras.models.Sequential([
-			tf.keras.layers.LSTM(4, batch_input_shape=(batch_size, in_seq_length, n_features), stateful=stateful, return_sequences=False),
+			tf.keras.layers.LSTM(32, batch_input_shape=(batch_size, in_seq_length, n_features), stateful=stateful, return_sequences=False),
 			tf.keras.layers.Dense(out_seq_length),
 		])
 	return rnn_model
