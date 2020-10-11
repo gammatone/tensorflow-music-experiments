@@ -38,6 +38,7 @@ from plot_utils import plot_by_key
 from array_utils import bufferize_array, unbufferize_array
 from NN_utils import create_RNN, optimizer_call
 from dsp_utils import librosa_write_wav
+from training_utils import KerasRNNTrainer
 
 
 # Comment this line if you have CUDA installed
@@ -77,69 +78,41 @@ def main():
             # Create pickle dictionary
             create_pkl_audio_dataset(my_audio_dirs[i], pkl_dir, my_pkl_filenames[i], keynames=signal_keys, sr=sr)
 
-    ## RAW DATA LOADING ##
-    # Load pickle files
-    train_dict = get_dict_from_pkl(os.path.join(pkl_dir, pkl_train_filename))
-    test_dict = get_dict_from_pkl(os.path.join(pkl_dir, pkl_test_filename))
-
-    if need_plot:
-        plot_by_key(train_dict, train_dict.keys(), title="Extract from train dataset",
-                    start_idx=int(5e4), end_idx=int(5.1e4))
-        plot_by_key(test_dict, test_dict.keys(), title="Extract from test dataset",
-                    start_idx=int(2e4), end_idx=int(2.1e4))
-
     ## DATA FORMATING FOR RNN ##
     # Training hyper parameters
     IN_SEQ_LENGTH = 128
-    HOP_SIZE = 128
+    HOP_SIZE = 10000
     N_FEATURES = 3
     OUT_SEQ_LENGTH = 128
     BATCH_SIZE = 256
-    EPOCHS = 500
-    # Prepare training set
-    # For RNN, friendly training format is:
-    #        x.shape = (n_chunks, IN_SEQ_LENGTH, N_FEATURES) ; y.shape = (n_chunks, OUT_SEQ_LENGTH, N_FEATURES))
-    # So stack inputs on last axis
-    x_train_stack = stack_array_from_dict_lastaxis(train_dict, input_signal_keys)
-    y_train_stack = stack_array_from_dict_lastaxis(train_dict, output_signal_keys)
-    x_train_chunks = bufferize_array(x_train_stack, IN_SEQ_LENGTH, hop_size=HOP_SIZE)
-    y_train_chunks = bufferize_array(y_train_stack, OUT_SEQ_LENGTH, hop_size=HOP_SIZE,
-                                        start_index=IN_SEQ_LENGTH - OUT_SEQ_LENGTH)
+    EPOCHS = 10
 
-    # Prepare testing set
-    x_test_stack = stack_array_from_dict_lastaxis(test_dict, input_signal_keys)
-    y_test_stack = stack_array_from_dict_lastaxis(test_dict, output_signal_keys)
-    x_test_chunks = bufferize_array(x_test_stack, IN_SEQ_LENGTH, hop_size=HOP_SIZE,
-                                    start_index=0, end_index=None)
-    y_test_chunks = bufferize_array(y_test_stack, OUT_SEQ_LENGTH, hop_size=HOP_SIZE,
-                                        start_index=IN_SEQ_LENGTH - OUT_SEQ_LENGTH,
-                                        end_index=None)
+    # Define model trainer
+    my_model_trainer = KerasRNNTrainer(pkl_dir, input_signal_keys, output_signal_keys,
+                                        optimizer_call(lr=1e-3), "mse",
+                                        IN_SEQ_LENGTH, HOP_SIZE, OUT_SEQ_LENGTH,
+                                        epochs=EPOCHS, batch_size=BATCH_SIZE)
 
-    ## MODEL TRAINING ##
+    if need_plot:
+        plot_by_key(my_model_trainer.train_dict, my_model_trainer.train_dict.keys(), title="Extract from train dataset",
+                    start_idx=int(5e4), end_idx=int(5.1e4))
+        plot_by_key(my_model_trainer.test_dict, my_model_trainer.test_dict.keys(), title="Extract from test dataset",
+                    start_idx=int(2e4), end_idx=int(2.1e4))
+    my_model_trainer.prepare_datasets()
     # Define STATELESS RNN model
     model = create_RNN(IN_SEQ_LENGTH, OUT_SEQ_LENGTH, n_features=N_FEATURES, stateful=False)
-    model.summary()
-    # Compile model with optimizer and loss
-    optimizer = optimizer_call(lr=1e-3)
-    model.compile(loss="mse", optimizer=optimizer)
-
-    training_state = model.fit(x_train_chunks, y_train_chunks, shuffle=True,
-                                epochs=EPOCHS, batch_size=BATCH_SIZE,
-                                validation_data=(x_test_chunks, y_test_chunks),
-                                validation_freq=3,
-                                )
-
+    # Start model training
+    my_model_trainer.train_model(model)
 
     ## MODEL TESTING ##
     # Do some predictions on the test set
-    prediction_array = model.predict(x_test_chunks)
+    prediction_array = model.predict(my_model_trainer.x_test)
     test_dict = {}
-    stacked_inputs = unbufferize_array(x_test_chunks, HOP_SIZE)
-    print(stacked_inputs.shape)
+    stacked_inputs = unbufferize_array(my_model_trainer.x_test, HOP_SIZE)
     test_dict["signal_in"] = stacked_inputs[:,0]
     test_dict["cutoff"] = stacked_inputs[:,1]
     test_dict["resonance"] = stacked_inputs[:,2]
-    test_dict["groundtruth"] = unbufferize_array(y_test_chunks, HOP_SIZE)
+    test_dict["groundtruth"] = unbufferize_array(my_model_trainer.y_test, HOP_SIZE)
     test_dict["model_predictions"] = unbufferize_array(prediction_array, HOP_SIZE)
 
     if need_plot:
