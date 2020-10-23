@@ -12,7 +12,15 @@ Module gathering useful classes and functions for NNs.
 import os
 
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Conv1D, Conv1DTranspose, MaxPool1D
+from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import BatchNormalization, Dropout
+from tensorflow.keras.layers import Add, Flatten, Reshape
+from tensorflow.keras.layers import Activation
+from tensorflow.keras.layers import TimeDistributed
 
 
 def optimizer_call(lr=0.001):
@@ -22,23 +30,11 @@ def optimizer_call(lr=0.001):
 	"""
 	return tf.keras.optimizers.RMSprop(lr=lr)
 
-def create_RNN_OutDense(in_seq_length, out_seq_length, n_features, stateful=False, batch_size=None):
+def vanilla_LSTM(in_seq_length, out_seq_length, n_features,
+				stateful=False,
+				batch_size=None):
 	"""
-	Function called when creating a RNN model.
-	Returns a keras model.
-	"""
-	rnn_model = tf.keras.models.Sequential([
-			tf.keras.layers.LSTM(64, batch_input_shape=(batch_size, in_seq_length, n_features),
-								stateful=stateful, return_sequences=False),
-			# tf.keras.layers.LSTM(32, stateful=stateful, return_sequences=False),
-			tf.keras.layers.Dense(out_seq_length),
-		])
-	return rnn_model
-
-def create_RNN_InDense(in_seq_length, out_seq_length, n_features, stateful=False, batch_size=None):
-	"""
-	Function called when creating a RNN model.
-	Returns a keras model.
+	Returns a vanilla LSTM net declared with TF functional API.
 
 	Notes about stateful/stateless mode if using an RNN model:   
             (1) Basically a stateful model doesn't reset its cell states at each prediction call.
@@ -54,63 +50,28 @@ def create_RNN_InDense(in_seq_length, out_seq_length, n_features, stateful=False
             Truncated backprop:
             - https://magenta.tensorflow.org/blog/2017/06/01/waybackprop/
 	"""
-	# if not stateful:
-	rnn_model = tf.keras.models.Sequential([
-			# tf.keras.layers.TimeDistributed(tf.keras.layers.InputLayer(), ),
-			tf.keras.layers.Input(batch_input_shape=(batch_size, in_seq_length, n_features)),
-			tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(4)),
-			tf.keras.layers.LSTM(16, stateful=stateful, return_sequences=True),
-			# tf.keras.layers.LSTM(8, stateful=stateful, return_sequences=True),
-			tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(4, activation='relu')),
-			tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(1)),
-		])
-	# else:
-	# 	rnn_model = tf.keras.models.Sequential([
-	# 			tf.keras.layers.Dense(16, batch_input_shape=(batch_size, in_seq_length, n_features)),
-	# 			tf.keras.layers.LSTM(64, stateful=stateful, return_sequences=True),
-	# 			tf.keras.layers.Dense(16, activation='relu'),
-	# 			tf.keras.layers.Dense(1),
-	# 		])
+	in_NN = Input(batch_input_shape=(batch_size, in_seq_length, n_features))
+	x = TimeDistributed(Dense(4))(in_NN)
+	x = LSTM(16, stateful=stateful, return_sequences=True)(x)
+	x = TimeDistributed(Dense(4))(x)
+	x = Activation('relu')(x)
+	out_NN = TimeDistributed(Dense(4))(x)
+	# Create model
+	model = Model(inputs=in_NN, outputs=out_NN)
+	return model
 
-	return rnn_model
-
-def create_RNN_AE(in_seq_length, out_seq_length, n_features, stateful=False, batch_size=None):
+def vanilla_feedfwdNN(in_seq_length, out_seq_length, n_features):
 	"""
-	Function called when creating a RNN model.
-	Returns a keras model.
+	Returns a vanilla feed-forwad net declared with TF functional API.
 	"""
-	rnn_model = tf.keras.models.Sequential([
-			tf.keras.layers.LSTM(128, batch_input_shape=(batch_size, in_seq_length, n_features),
-								stateful=stateful, return_sequences=False),
-			tf.keras.layers.RepeatVector(out_seq_length),
-			tf.keras.layers.LSTM(128, stateful=stateful, return_sequences=True),
-			tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(1)),
-		])
-	return rnn_model
-
-def create_feedfwdNN(in_seq_length, out_length, n_features):
-	"""
-	Function called when creating a feed-forward NN model.
-	Returns a keras model.
-	"""
-	rnn_model = tf.keras.models.Sequential([
-			tf.keras.layers.Conv1D(32, 512, input_shape=(in_seq_length, n_features)),
-			tf.keras.layers.MaxPool1D(8),
-			tf.keras.layers.ReLU(),
-			tf.keras.layers.Conv1D(64, 32),
-			# tf.keras.layers.MaxPool1D(2),
-			tf.keras.layers.ReLU(),
-			# tf.keras.layers.Conv1D(64, 128),
-			# tf.keras.layers.MaxPool1D(2),
-			# tf.keras.layers.ReLU(),
-			tf.keras.layers.Flatten(),
-
-			# tf.keras.layers.Flatten(input_shape=(in_feature_length, n_features)),
-
-			# tf.keras.layers.Dense(4096, activation="relu"),
-			tf.keras.layers.Dense(1024, activation="relu"),
-			# tf.keras.layers.Dense(512, activation="relu"),
-			# tf.keras.layers.Dense(512, activation="relu"),
-			tf.keras.layers.Dense(out_length),
-		])
-	return rnn_model
+	in_NN = Input(shape=(in_seq_length, n_features))
+	x = Conv1D(32, 512)(in_NN)
+	x = MaxPool1D(8)(x)
+	x = Activation('relu')(x)
+	x = Flatten()(x)
+	x = Dense(1024)(x)
+	x = Activation('relu')(x)
+	out_NN = Dense(out_seq_length)(x)
+	# Create model
+	model = Model(inputs=in_NN, outputs=out_NN)
+	return model

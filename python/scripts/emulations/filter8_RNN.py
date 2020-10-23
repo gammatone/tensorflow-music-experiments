@@ -22,6 +22,7 @@ The use of RNN type is motivated by its temporal behaviour which enables to make
 
 import os, sys
 
+import numpy as np
 import tensorflow as tf
 
 
@@ -36,7 +37,7 @@ sys.path.append(os.path.join(root_dir, "python/modules/"))
 # Custom imports
 from dataset_utils import create_pkl_audio_dataset
 from plot_utils import plot_by_key
-from NN_utils import optimizer_call, create_RNN_OutDense, create_RNN_InDense
+from NN_utils import optimizer_call, vanilla_LSTM
 from dsp_utils import librosa_write_wav
 from training_utils import KerasBufferizedNNHandler
 
@@ -47,6 +48,13 @@ from training_utils import KerasBufferizedNNHandler
 print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
 # tf.debugging.set_log_device_placement(True)
 
+
+def get_RNN_model(in_length, out_length, n_features, stateful=False, batch_size=None):
+    model = vanilla_LSTM(   in_length, out_length, n_features=n_features,
+                            stateful=stateful,
+                            batch_size=batch_size,
+                            )
+    return model
 
 def main():
     """
@@ -88,12 +96,12 @@ def main():
     ## DATA FORMATING FOR RNN ##
     # Training hyper parameters
     IN_SEQ_LENGTH = 4096
-    HOP_SIZE = 512
+    HOP_SIZE = 4096
     N_FEATURES = 3
     # (Careful: for evaluation, out length should be higher than hop size to recover all the data)
     OUT_SEQ_LENGTH = 4096
     BATCH_SIZE = 32
-    EPOCHS = 500
+    EPOCHS = 10
 
     # Define model trainer
     my_model_trainer = KerasBufferizedNNHandler(pkl_dir, input_signal_keys, output_signal_keys,
@@ -108,7 +116,9 @@ def main():
                     start_idx=int(2e4), end_idx=int(2.1e4))
     my_model_trainer.prepare_datasets()
     # Define STATELESS RNN model
-    model = create_RNN_InDense(IN_SEQ_LENGTH, OUT_SEQ_LENGTH, n_features=N_FEATURES, stateful=False)
+    model = get_RNN_model(in_length=IN_SEQ_LENGTH, out_length=OUT_SEQ_LENGTH, n_features=N_FEATURES,
+                            stateful=False,
+                            )
     model.summary()
     # Start model training
     my_model_trainer.train_model(model)
@@ -119,6 +129,17 @@ def main():
     eval_score = my_model_trainer.evaluate_model(model, need_plot=False)
     print("Evaluation score = {}".format(eval_score))
 
+    print("Inference on trained model")
+    # Predict output of evaluation dataset inputs from trained model
+    eval_predictions = my_model_trainer.predict(model, my_model_trainer.x_eval)
+    print("Saving inference output to audio file")
+    # Save to audio file
+    if not os.path.exists(audio_out_dir):
+        os.makedirs(audio_out_dir)
+    savefilepath = os.path.join(audio_out_dir, "infered_data_trained_model.wav")
+    # Use numpy asfortranarray() function to ensure Fortran contiguity on the array
+    librosa_write_wav(np.asfortranarray(eval_predictions), savefilepath, sr=sr)
+
     # Redefine a STATEFUL new model to get a one-to-one sample RNN model
     print("\nOne-to-one sample model creation from trained model (i.e. the one used in real-time)")
 
@@ -128,7 +149,10 @@ def main():
                                                 1, 1, 1,
                                                 )
     my_stateful_model_handler.prepare_datasets()
-    stateful_model = create_RNN_InDense(1, 1, n_features=N_FEATURES, stateful=True, batch_size=1)
+    stateful_model = get_RNN_model(in_length=1, out_length=1, n_features=N_FEATURES,
+                            stateful=False,
+                            batch_size=1,
+                            )
     stateful_model.summary()
     # Copy weights from trained model
     training_weights = model.get_weights()
@@ -136,31 +160,23 @@ def main():
     # Do evaluation
     stateful_model.compile(optimizer_call(lr=1e-3), "mse",)
     print("Evaluating real-time model")
-    eval_duration_s = 5.
+    eval_duration_s = 0.1
     eval_score = my_stateful_model_handler.evaluate_model(stateful_model, batch_size=1,
                                                     start_end_idxs=(0, int(eval_duration_s * sr)),
                                                     need_plot=need_plot)
     print("Evaluation score = {}".format(eval_score))
 
 
-    print("Saving trained model inference to audio file")
-    # Predict output of evaluation dataset inputs from trained model
-    eval_predictions = my_model_trainer.predict(model, my_model_trainer.x_eval, batch_size=1)
-    # Save to audio file
-    if not os.path.exists(audio_out_dir):
-        os.makedirs(audio_out_dir)
-    savefilepath = os.path.join(audio_out_dir, "infered_data_trained_model.wav")
-    librosa_write_wav(eval_predictions, savefilepath, sr=sr)
-
-
-    print("Saving real-time model inference to audio file")
+    print("Inference on real-time model")
     # Predict output of evaluation dataset inputs from stateful model
     eval_predictions = my_stateful_model_handler.predict(stateful_model, my_stateful_model_handler.x_eval, batch_size=1)
+    print("Saving inference output to audio file")
     # Save to audio file
     if not os.path.exists(audio_out_dir):
         os.makedirs(audio_out_dir)
     savefilepath = os.path.join(audio_out_dir, "infered_data_realtime_model.wav")
-    librosa_write_wav(eval_predictions, savefilepath, sr=sr)
+    # Use numpy asfortranarray() function to ensure Fortran contiguity on the array
+    librosa_write_wav(np.asfortranarray(eval_predictions), savefilepath, sr=sr)
 
     return
 
