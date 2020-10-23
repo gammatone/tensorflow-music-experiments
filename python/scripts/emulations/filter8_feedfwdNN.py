@@ -93,12 +93,17 @@ def main():
     N_FEATURES = 3
     BATCH_SIZE = 32
     EPOCHS = 1
+    VALIDATION_FREQ=3
 
     # Define model trainer
     my_model_trainer = KerasBufferizedNNHandler(pkl_dir, input_signal_keys, output_signal_keys,
                                                 optimizer_call(lr=1e-4), "mse",
                                                 IO_BUFF_SIZE, HOP_SIZE, IO_BUFF_SIZE,
-                                                epochs=EPOCHS, batch_size=BATCH_SIZE)
+                                                need_training=True,
+                                                train_filename=my_pkl_filenames[0],
+                                                val_filename=my_pkl_filenames[1],
+                                                eval_filename=my_pkl_filenames[2],
+                                                )
 
     if need_plot:
         plot_by_key(my_model_trainer.train_dict, my_model_trainer.train_dict.keys(), title="Extract from train dataset",
@@ -110,7 +115,8 @@ def main():
     model = vanilla_feedfwdNN(IO_BUFF_SIZE, IO_BUFF_SIZE, n_features=N_FEATURES)
     model.summary()
     # Start model training
-    my_model_trainer.train_model(model)
+    training_state = my_model_trainer.train_model(model, epochs=EPOCHS, batch_size=BATCH_SIZE,
+                                                    val_freq=VALIDATION_FREQ)
 
     ## MODEL TESTING ##
     # Evaluate trained model (i.e. many-to-many samples model)  
