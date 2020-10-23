@@ -16,7 +16,7 @@ from array_utils import bufferize_array, unbufferize_array
 from plot_utils import plot_by_key
 
 
-class ModelTrainer():
+class ModelHandler():
     """
     A class that will load pickle dictionary files containing train and validation data to perform model training.
     """
@@ -83,9 +83,9 @@ class ModelTrainer():
 
 
 
-class KerasModelTrainer(ModelTrainer):
+class KerasModelHandler(ModelHandler):
     """
-    Model trainer child class using Keras API 
+    Model handler child class using Keras API 
     """
     def __init__(   self,
                     pkl_load_dir, input_keys, groundtruth_keys,
@@ -95,7 +95,7 @@ class KerasModelTrainer(ModelTrainer):
         """
         Init parent class and add optimizer & loss
         """
-        super(KerasModelTrainer, self).__init__(pkl_load_dir, input_keys, groundtruth_keys, **kwargs)
+        super(KerasModelHandler, self).__init__(pkl_load_dir, input_keys, groundtruth_keys, **kwargs)
         self.optimizer = keras_optim
         self.loss = keras_loss
 
@@ -111,13 +111,16 @@ class KerasModelTrainer(ModelTrainer):
                                     validation_freq=3,
                                     )
 
-    def evaluate_model(self, keras_model, need_plot=False):
+    def evaluate_model(self, keras_model, batch_size=None, start_end_idxs=None, need_plot=False):
         """
         Compute the average loss function score on the evaluation dataset.
         Plot the IO of the model if needed
-        """
+        """   
+        if start_end_idxs is not None:
+            self.x_eval = self.x_eval[start_end_idxs[0]:start_end_idxs[1]]
+            self.y_eval = self.y_eval[start_end_idxs[0]:start_end_idxs[1]]
         if need_plot:
-            predicted_output = self.predict(keras_model, self.x_eval)
+            predicted_output = self.predict(keras_model, self.x_eval, batch_size=batch_size)
             array_dict = {}
             # Append signals from evaluation dict
             for key in self.eval_dict.keys():
@@ -125,18 +128,18 @@ class KerasModelTrainer(ModelTrainer):
             # Append predictions in dict
             array_dict["predictions"] = predicted_output
             plot_by_key(array_dict, array_dict.keys(), title="Model evaluation")
-        return keras_model.evaluate(self.x_eval, self.y_eval)
+        return keras_model.evaluate(self.x_eval, self.y_eval, batch_size=batch_size)
 
-    def predict(self, keras_model, x_inputs):
+    def predict(self, keras_model, x_inputs, batch_size=None):
         """
         """
-        return keras_model.predict(x_inputs)
+        return keras_model.predict(x_inputs, batch_size=batch_size)
 
 
 
-class KerasBufferizedNNTrainer(KerasModelTrainer):
+class KerasBufferizedNNHandler(KerasModelHandler):
     """
-    Keras Model trainer child class.
+    Keras Model handler child class.
     Dedicated for NN model working with IO buffers of same or different length.
     Example: RNN models which work with input and output sequences will require to bufferize datasets before training and validation.
 
@@ -152,7 +155,7 @@ class KerasBufferizedNNTrainer(KerasModelTrainer):
         """
         Init parent class and add optimizer
         """
-        super(KerasBufferizedNNTrainer, self).__init__(pkl_load_dir, input_keys, groundtruth_keys,
+        super(KerasBufferizedNNHandler, self).__init__(pkl_load_dir, input_keys, groundtruth_keys,
                                                 keras_optim, keras_loss,
                                                 **kwargs)
         # RNN hyper-parameters
@@ -165,7 +168,7 @@ class KerasBufferizedNNTrainer(KerasModelTrainer):
         For both train and validation sets: Stack data into a numpy array acoording to input and groundtruth keys.
         Override parent method to bufferize data.
         """
-        super(KerasBufferizedNNTrainer, self).prepare_datasets()
+        super(KerasBufferizedNNHandler, self).prepare_datasets()
 
         # Train set
         # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
@@ -181,6 +184,11 @@ class KerasBufferizedNNTrainer(KerasModelTrainer):
         self.y_val = bufferize_array(self.y_val, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
                                             start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
 
+    def evaluate_model(self, keras_model, batch_size=None, start_end_idxs=None, need_plot=False):
+        """
+        Compute the average loss function score on the evaluation dataset.
+        Plot the IO of the model if needed.
+        """
 
         # Evaluation set
         # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
@@ -188,14 +196,14 @@ class KerasBufferizedNNTrainer(KerasModelTrainer):
         # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
         self.y_eval = bufferize_array(self.y_eval, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
                                             start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
+        return super(KerasBufferizedNNHandler, self).evaluate_model(keras_model, batch_size=batch_size,
+                                                                    start_end_idxs=start_end_idxs,
+                                                                    need_plot=need_plot)
 
 
-    def predict(self, keras_model, x_inputs):
+    def predict(self, keras_model, x_inputs, batch_size=None):
         """
         Override predict() parent method to unbufferize output
         """
-        bufferized_predictions = keras_model.predict(x_inputs)
+        bufferized_predictions = keras_model.predict(x_inputs, batch_size=batch_size)
         return unbufferize_array(bufferized_predictions, self.HOP_SIZE)
-
-
-

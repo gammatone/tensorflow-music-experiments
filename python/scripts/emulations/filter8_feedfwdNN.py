@@ -22,6 +22,8 @@ The use of bufferized data feed to NN is motivated by a real-time implementation
 
 import os, sys
 
+import tensorflow as tf
+
 
 
 file_dir = os.path.dirname(os.path.realpath(__file__))
@@ -42,6 +44,10 @@ from training_utils import KerasBufferizedNNTrainer
 
 # Comment this line if you have CUDA installed
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
+print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+# tf.debugging.set_log_device_placement(True)
+
 
 def main():
     """
@@ -82,15 +88,16 @@ def main():
 
     ## DATA FORMATING FOR NN ##
     # Training hyper parameters
-    IO_BUFF_SIZE = 2048
+    IO_BUFF_SIZE = 1024
+    HOP_SIZE = 32
     N_FEATURES = 3
-    BATCH_SIZE = 16
-    EPOCHS = 100
+    BATCH_SIZE = 32
+    EPOCHS = 50
 
     # Define model trainer
     my_model_trainer = KerasBufferizedNNTrainer(pkl_dir, input_signal_keys, output_signal_keys,
-                                                optimizer_call(lr=1e-3), "mse",
-                                                IO_BUFF_SIZE, IO_BUFF_SIZE, IO_BUFF_SIZE,
+                                                optimizer_call(lr=1e-4), "mse",
+                                                IO_BUFF_SIZE, HOP_SIZE, IO_BUFF_SIZE,
                                                 epochs=EPOCHS, batch_size=BATCH_SIZE)
 
     if need_plot:
@@ -101,6 +108,7 @@ def main():
     my_model_trainer.prepare_datasets()
     # Define NN model
     model = create_feedfwdNN(IO_BUFF_SIZE, IO_BUFF_SIZE, n_features=N_FEATURES)
+    model.summary()
     # Start model training
     my_model_trainer.train_model(model)
 
