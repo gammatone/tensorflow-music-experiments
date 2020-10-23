@@ -22,16 +22,20 @@ class ModelHandler():
     """
     def __init__(   self,
                     pkl_load_dir, input_keys, groundtruth_keys,
-                    train_filename="train.pkl", val_filename="validation.pkl", eval_filename="evaluation.pkl",
-                    epochs=100, batch_size=32,
+                    need_training=False,
+                    train_filename=None, val_filename=None, eval_filename="evaluation.pkl",
                     ):
         """
         """
         # define pickle directories (where the pickle files are located)
         self.pkl_load_dir = pkl_load_dir
-        # Define train & val datasets pickle filepaths 
-        self.pkl_train_filepath = os.path.join(os.path.join(self.pkl_load_dir, train_filename))
-        self.pkl_val_filepath = os.path.join(os.path.join(self.pkl_load_dir, val_filename))
+        # Training enable flag
+        self.need_training = need_training
+        if self.need_training:
+            # Define train & val datasets pickle filepaths 
+            self.pkl_train_filepath = os.path.join(os.path.join(self.pkl_load_dir, train_filename))
+            self.pkl_val_filepath = os.path.join(os.path.join(self.pkl_load_dir, val_filename))
+        # Define evaluation dataset pickle filepath 
         self.pkl_eval_filepath = os.path.join(os.path.join(self.pkl_load_dir, eval_filename))
         # Load pickle data
         self.load_pkl_data()
@@ -40,33 +44,33 @@ class ModelHandler():
         self.input_keys = input_keys
         self.groundtruth_keys = groundtruth_keys
 
-        # Training hyper-parameters
-        self.EPOCHS = epochs
-        self.BATCH_SIZE = batch_size
-
         return
 
     def load_pkl_data(self):
         """
-        Load pickle dictionaries for train and validation sets
+        Load pickle dictionary for evaluation set
+        If need_training flag is ON, load pickle dictionaries for train and validation sets
         """
-        self.train_dict = get_dict_from_pkl(self.pkl_train_filepath)
-        self.val_dict = get_dict_from_pkl(self.pkl_val_filepath)
+        if self.need_training:
+            self.train_dict = get_dict_from_pkl(self.pkl_train_filepath)
+            self.val_dict = get_dict_from_pkl(self.pkl_val_filepath)
         self.eval_dict = get_dict_from_pkl(self.pkl_eval_filepath)
 
     def prepare_datasets(self):
         """
-        For both train and validation sets: Stack data into a numpy array acoording to input and groundtruth keys.
+        For evaluation set: stack data into a numpy array acoording to input and groundtruth keys
+        If need_training flag is ON, Idem for both train and validation sets: 
         """
-        # Train set
-        # Stack inputs (i.e. features) on last axis
-        self.x_train = stack_array_from_dict_lastaxis(self.train_dict, self.input_keys)
-        self.y_train = stack_array_from_dict_lastaxis(self.train_dict, self.groundtruth_keys)
+        if self.need_training:
+            # Train set
+            # Stack inputs (i.e. features) on last axis
+            self.x_train = stack_array_from_dict_lastaxis(self.train_dict, self.input_keys)
+            self.y_train = stack_array_from_dict_lastaxis(self.train_dict, self.groundtruth_keys)
 
-        # Validation set
-        # Stack inputs (i.e. features) on last axis
-        self.x_val = stack_array_from_dict_lastaxis(self.val_dict, self.input_keys)
-        self.y_val = stack_array_from_dict_lastaxis(self.val_dict, self.groundtruth_keys)
+            # Validation set
+            # Stack inputs (i.e. features) on last axis
+            self.x_val = stack_array_from_dict_lastaxis(self.val_dict, self.input_keys)
+            self.y_val = stack_array_from_dict_lastaxis(self.val_dict, self.groundtruth_keys)
 
         # Evaluation set
         # Stack inputs (i.e. features) on last axis
@@ -99,23 +103,27 @@ class KerasModelHandler(ModelHandler):
         self.optimizer = keras_optim
         self.loss = keras_loss
 
-    def train_model(self, keras_model):
+    def train_model(self, keras_model, epochs=50, batch_size=32, val_freq=3):
         """
         Compile provided keras_model with selected optimizer andstart training
+        Will work only if need_training flag is True. Else it will throw an error.
         """
 
         keras_model.compile(loss=self.loss, optimizer=self.optimizer)
         training_state = keras_model.fit(self.x_train, self.y_train, shuffle=True,
-                                    epochs=self.EPOCHS, batch_size=self.BATCH_SIZE,
+                                    epochs=epochs, batch_size=batch_size,
                                     validation_data=(self.x_val, self.y_val),
-                                    validation_freq=3,
+                                    validation_freq=val_freq,
                                     )
+        return training_state
 
     def evaluate_model(self, keras_model, batch_size=None, start_end_idxs=None, need_plot=False):
         """
         Compute the average loss function score on the evaluation dataset.
         Plot the IO of the model if needed
-        """   
+        """
+        keras_model.compile(loss=self.loss, optimizer=self.optimizer)
+        keras_model.reset_states()
         if start_end_idxs is not None:
             self.x_eval = self.x_eval[start_end_idxs[0]:start_end_idxs[1]]
             self.y_eval = self.y_eval[start_end_idxs[0]:start_end_idxs[1]]
@@ -169,20 +177,20 @@ class KerasBufferizedNNHandler(KerasModelHandler):
         Override parent method to bufferize data.
         """
         super(KerasBufferizedNNHandler, self).prepare_datasets()
+        if self.need_training:
+            # Train set
+            # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
+            self.x_train = bufferize_array(self.x_train, self.INPUT_LENGTH, hop_size=self.HOP_SIZE)
+            # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
+            self.y_train = bufferize_array(self.y_train, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
+                                                start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
 
-        # Train set
-        # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
-        self.x_train = bufferize_array(self.x_train, self.INPUT_LENGTH, hop_size=self.HOP_SIZE)
-        # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
-        self.y_train = bufferize_array(self.y_train, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
-                                            start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
-
-        # Validation set
-        # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
-        self.x_val = bufferize_array(self.x_val, self.INPUT_LENGTH, hop_size=self.HOP_SIZE)
-        # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
-        self.y_val = bufferize_array(self.y_val, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
-                                            start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
+            # Validation set
+            # For RNN split the input data into chunks of length IN_SEQ_LENGTH and HOP_SIZE
+            self.x_val = bufferize_array(self.x_val, self.INPUT_LENGTH, hop_size=self.HOP_SIZE)
+            # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
+            self.y_val = bufferize_array(self.y_val, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
+                                                start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
 
     def evaluate_model(self, keras_model, batch_size=None, start_end_idxs=None, need_plot=False):
         """
