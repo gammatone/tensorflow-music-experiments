@@ -37,9 +37,9 @@ sys.path.append(os.path.join(root_dir, "python/modules/"))
 # Custom imports
 from dataset_utils import create_pkl_audio_dataset
 from plot_utils import plot_by_key
-from NN_utils import create_feedfwdNN, optimizer_call
+from NN_utils import vanilla_feedfwdNN, optimizer_call
 from dsp_utils import librosa_write_wav
-from training_utils import KerasBufferizedNNTrainer
+from training_utils import KerasBufferizedNNHandler
 
 
 # Comment this line if you have CUDA installed
@@ -89,13 +89,13 @@ def main():
     ## DATA FORMATING FOR NN ##
     # Training hyper parameters
     IO_BUFF_SIZE = 1024
-    HOP_SIZE = 32
+    HOP_SIZE = 1024
     N_FEATURES = 3
     BATCH_SIZE = 32
-    EPOCHS = 50
+    EPOCHS = 1
 
     # Define model trainer
-    my_model_trainer = KerasBufferizedNNTrainer(pkl_dir, input_signal_keys, output_signal_keys,
+    my_model_trainer = KerasBufferizedNNHandler(pkl_dir, input_signal_keys, output_signal_keys,
                                                 optimizer_call(lr=1e-4), "mse",
                                                 IO_BUFF_SIZE, HOP_SIZE, IO_BUFF_SIZE,
                                                 epochs=EPOCHS, batch_size=BATCH_SIZE)
@@ -107,18 +107,21 @@ def main():
                     start_idx=int(2e4), end_idx=int(2.1e4))
     my_model_trainer.prepare_datasets()
     # Define NN model
-    model = create_feedfwdNN(IO_BUFF_SIZE, IO_BUFF_SIZE, n_features=N_FEATURES)
+    model = vanilla_feedfwdNN(IO_BUFF_SIZE, IO_BUFF_SIZE, n_features=N_FEATURES)
     model.summary()
     # Start model training
     my_model_trainer.train_model(model)
 
     ## MODEL TESTING ##
-    # Do evaluation
+    # Evaluate trained model (i.e. many-to-many samples model)  
+    print("Evaluating trained model")
     eval_score = my_model_trainer.evaluate_model(model, need_plot=need_plot)
     print("Evaluation score = {}".format(eval_score))
 
+    print("Inference on trained model")
     # Predict output of evaluation dataset inputs
     eval_predictions = my_model_trainer.predict(model, my_model_trainer.x_eval)
+    print("Saving inference output to audio file")
     # Save to audio file
     if not os.path.exists(audio_out_dir):
         os.makedirs(audio_out_dir)
