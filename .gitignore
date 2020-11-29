@@ -1,5 +1,5 @@
 
 *.pyc
-data/keras_model/*
+data/keras_models/*
 data/audio/*
 data/pickle/*
