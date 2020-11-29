@@ -28,6 +28,8 @@ import pickle
 import tensorflow as tf
 from tensorflow.keras.models import load_model
 
+import time
+
 file_dir = os.path.dirname(os.path.realpath(__file__))
 root_dir = os.path.abspath(os.path.join(file_dir, os.pardir))
 root_dir = os.path.abspath(os.path.join(root_dir, os.pardir))
@@ -37,7 +39,7 @@ root_dir = os.path.abspath(os.path.join(root_dir, os.pardir))
 sys.path.append(os.path.join(root_dir, "python/modules/"))
 
 # Custom imports
-from dataset_utils import create_pkl_audio_dataset
+from dataset_utils import create_pkl_audio_dataset, get_dict_from_pkl, stack_array_from_dict_lastaxis
 from plot_utils import plot_by_key
 from NN_utils import optimizer_call, vanilla_LSTM
 from dsp_utils import librosa_write_wav
@@ -47,7 +49,31 @@ from training_utils import KerasBufferizedNNHandler
 # Comment this line if you have CUDA installed
 # os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+gpus = tf.config.experimental.list_physical_devices('GPU')
+print("Num GPUs Available: ", len(gpus))
+if gpus:
+  try:
+    # Currently, memory growth needs to be the same across GPUs
+    for gpu in gpus:
+      tf.config.experimental.set_memory_growth(gpu, True)
+    logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+    print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+  except RuntimeError as e:
+    # Memory growth must be set before GPUs have been initialized
+    print(e)
+# if gpus:
+#   # Restrict TensorFlow to only allocate 1GB of memory on the first GPU
+#   try:
+#     tf.config.experimental.set_virtual_device_configuration(
+#         gpus[0],
+#         [tf.config.experimental.VirtualDeviceConfiguration(memory_limit=1024)])
+#     logical_gpus = tf.config.experimental.list_logical_devices('GPU')
+#     print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+#   except RuntimeError as e:
+#     # Virtual devices must be set before GPUs have been initialized
+#     print(e)
+
+
 # tf.debugging.set_log_device_placement(True)
 
 
@@ -96,7 +122,9 @@ def training_routine(pkl_dir, input_signal_keys, output_signal_keys,
 
     ## MODEL TRAINING ##
     training_state = my_model_trainer.train_model(model, epochs=EPOCHS, batch_size=BATCH_SIZE,
-                                                    val_freq=VALIDATION_FREQ)
+                                                    val_freq=VALIDATION_FREQ,
+                                                    need_sample_weight=True,
+                                                    )
     # Define a dict for training losses
     training_losses = {}
     training_losses["loss"] = np.array(training_state.history["loss"])
@@ -113,7 +141,6 @@ def training_routine(pkl_dir, input_signal_keys, output_signal_keys,
     print("Evaluation score = {}".format(eval_score))
 
     print("Inference on trained model")
-    # Predict output of evaluation dataset inputs from trained model
     eval_predictions = my_model_trainer.predict(model, my_model_trainer.x_eval)
     print("Saving inference output to audio file")
 
@@ -134,19 +161,20 @@ def training_routine(pkl_dir, input_signal_keys, output_signal_keys,
         model_save_dir = os.path.join(model_root_save_dir, datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(model_save_dir)
         # Save useful constants from training as pickle
-        result_dict = {}
-        result_dict["sample_rate"] = SAMPLE_RATE
-        result_dict["epochs"] = EPOCHS
-        result_dict["batch_size"] = BATCH_SIZE
-        result_dict["hop_size"] = HOP_SIZE
-        result_dict["loss_metric"] = loss_metric
-        result_dict["optimizer"] = optimizer
-        result_dict["val_freq"] = VALIDATION_FREQ
-        result_dict["training_losses"] = training_losses
-        with open(os.path.join(model_save_dir,"training_results.pkl"), "wb") as f:
-            pickle.dump(result_dict, f)
+        model_infos_dict = {}
+        model_infos_dict["sample_rate"] = SAMPLE_RATE
+        model_infos_dict["epochs"] = EPOCHS
+        model_infos_dict["batch_size"] = BATCH_SIZE
+        model_infos_dict["hop_size"] = HOP_SIZE
+        model_infos_dict["loss_metric"] = loss_metric
+        model_infos_dict["optimizer"] = optimizer
+        model_infos_dict["val_freq"] = VALIDATION_FREQ
+        model_infos_dict["training_losses"] = training_losses
+        model_infos_dict["score_many2many"] = eval_score
+        with open(os.path.join(model_save_dir,"model_infos.pkl"), "wb") as f:
+            pickle.dump(model_infos_dict, f)
         # Save model in the sub directory
-        model.save(os.path.join(model_save_dir,'trained_model.h5'),)
+        model.save(os.path.join(model_save_dir,'trained_model'), save_format='tf')
 
     return model_save_dir
 
@@ -159,22 +187,21 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
         - Create one-to-one stateful RNN (i.e. the real-time implementation model)
         with same graph than pretrained model
         - Copy weight from the pretrained model
-        - Train RNN in stateless mode (i.e. truncated backprop for each chunks of length IO_size)
-        - Evaluate stateful model
+        - Evaluate one-to-one model
         - Create audio file corresponding to the infered data from a test dataset
     """
     ## PRETRAINED MODEL LOADING ##
     # Load pretrained stateless model
     for file in os.listdir(savedmodel_dir):
-        if file == "trained_model.h5":
+        if file == "trained_model":
             pretrained_model = load_model(os.path.join(savedmodel_dir, file),)
             break
     # Load training infos from saved dictionary
-    with open(os.path.join(savedmodel_dir, "training_results.pkl"), "rb") as f:
-        training_results_dict = pickle.load(f)
+    with open(os.path.join(savedmodel_dir, "model_infos.pkl"), "rb") as f:
+        model_infos_dict = pickle.load(f)
     # Deduce optimizer and loss metric to be able to compile real-time model later
-    optimizer = training_results_dict["optimizer"]
-    loss_metric = training_results_dict["loss_metric"]
+    optimizer = model_infos_dict["optimizer"]
+    loss_metric = model_infos_dict["loss_metric"]
 
     ## REAL-TIME MODEL CREATION ##
     # Define model handler for testing one-to-one stateful model:
@@ -200,9 +227,9 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
 
     ## REAL-TIME MODEL EVALUATION ##
     print("Evaluating real-time model")
-    eval_duration_s = 5.
+    EVAL_DURATION_s = 0.1
     eval_score = my_rt_model_tester.evaluate_model(rt_model, batch_size=1,
-                                                    start_end_idxs=(0, int(eval_duration_s * SAMPLE_RATE)),
+                                                    start_end_idxs=(0, int(EVAL_DURATION_s * SAMPLE_RATE)),
                                                     need_plot=NEED_PLOT)
     print("Evaluation score = {}".format(eval_score))
     print("Inference on real-time model")
@@ -218,7 +245,98 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
     # Use numpy asfortranarray() function to ensure Fortran contiguity on the array
     librosa_write_wav(np.asfortranarray(eval_predictions), savefilepath, sr=SAMPLE_RATE)
 
+    ## MODEL SAVING ##
+    # Save useful constants from training as pickle
+    model_infos_dict["score_one2one"] = eval_score
+    with open(os.path.join(savedmodel_dir,"model_infos.pkl"), "wb") as f:
+        pickle.dump(model_infos_dict, f)
+    run_model = tf.function(lambda x: rt_model(x))
+    concrete_func = run_model.get_concrete_function(
+    tf.TensorSpec([1, 1, 3], rt_model.inputs[0].dtype))
+    rt_model.save(os.path.join(savedmodel_dir,'trained_model_rt'), save_format='tf', signatures=concrete_func)
+
     return
+
+def tflite_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_keys,
+                    test_pkl_filename="evaluation.pkl",
+                    ):
+    """
+    TensorFlow Lite conversion function:
+        - Load a pretrained one-to-one RNN Keras model
+        - Convert it to tensorflow lite format
+        - Evaluate tflite model
+    """
+    ## PRETRAINED MODEL LOADING ##
+    # Load pretrained one2one stateful model
+    for file in os.listdir(savedmodel_dir):
+        if file == "trained_model_rt":
+            stateful_model = load_model(os.path.join(savedmodel_dir, file),)
+            stateful_model.reset_states()
+            break
+    # Load training infos from saved dictionary
+    with open(os.path.join(savedmodel_dir, "model_infos.pkl"), "rb") as f:
+        model_infos_dict = pickle.load(f)
+
+    # If RNN model to convert is stateful. Conversion won't work...
+    # So create a stateless model with same parameters and convert it to tensorflow lite
+    # The tflite model is stateful by default so it should work as the keras stateful model
+    print("\nOne-to-one RNN model (i.e. the one used in real-time) creation according to trained model config")
+    stateless_model = get_RNN_model(in_length=1, out_length=1, n_features=N_FEATURES,
+                            stateful=False,
+                            batch_size=1,
+                            )
+    # Copy weights from pretrained model
+    training_weights = stateful_model.get_weights()
+    stateless_model.set_weights(training_weights)
+
+    ## TFLITE CONVERSION ##
+    target_ops = [tf.lite.OpsSet.TFLITE_BUILTINS, tf.lite.OpsSet.SELECT_TF_OPS]
+    tflite_converter = tf.lite.TFLiteConverter.from_keras_model(stateless_model)
+    # tflite_converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    tflite_converter.target_ops = target_ops
+    tflite_converter.target_spec.supported_ops = set(target_ops)
+    # Call the representative dataset generator
+    # tflite_converter.representative_dataset = self.repr_dataset_gen
+    # Run the TFLite converter
+    tflite_model = tflite_converter.convert()
+
+    ## TFLITE EVALUATION ##
+    # open evaluation set from pickle file
+    eval_dict = get_dict_from_pkl(os.path.join(pkl_dir, test_pkl_filename))
+    x_eval = stack_array_from_dict_lastaxis(eval_dict, input_signal_keys)
+    y_eval = stack_array_from_dict_lastaxis(eval_dict, output_signal_keys)
+    print("Evaluating tflite conversion")
+    # Prepare TensorFlow Lite Interpreter
+    interpreter = tf.lite.Interpreter(model_content=tflite_model)
+    interpreter.allocate_tensors()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+    # Allocate output arrays, each for the 2 models to compare
+    stateful_outputs = np.zeros((int(EVAL_DURATION_s * SAMPLE_RATE),), dtype=np.float32)
+    tflite_outputs = np.zeros(stateful_outputs.shape, dtype=np.float32)
+    # Allocate dt array to store inference times
+    dt_array = np.zeros(stateful_outputs.shape, dtype=np.float32)
+    # Inference loop
+    for i in range(int(EVAL_DURATION_s * SAMPLE_RATE)):
+        x_input = np.expand_dims(x_eval[i:i+1, :], axis=0)
+        stateful_outputs[i] = stateful_model.predict(x_input)[0][0]
+        # Inference on tflite model
+        start_time = time.perf_counter()
+        interpreter.set_tensor(input_details[0]["index"], x_input)
+        interpreter.invoke()
+        tflite_outputs[i] = interpreter.get_tensor(output_details[0]["index"])[0][0]
+        end_time = time.perf_counter()
+        dt_array[i] = end_time - start_time
+
+
+    print("'tflite vs. keras stateful model' MSE = {}".format(((stateful_outputs - tflite_outputs)**2).mean(axis=0)))
+    print("At current samplerate ({} Hz), rt sample-wise inference time should last less than {} s".format(SAMPLE_RATE, 1/SAMPLE_RATE))
+    print("Evaluated tflite sample-wise inference time (s) = (mean: {}; std: {})".format(dt_array.mean(axis=0), dt_array.std(axis=0)))
+
+    ## TFLITE SAVING ##
+    # Save quantized model
+    with open(os.path.join(savedmodel_dir,"trained_model_rt.tflite"), "wb") as f:
+        f.write(tflite_model)
 
 def main():
     """
@@ -228,19 +346,27 @@ def main():
     global SAMPLE_RATE
     global IO_SEQ_LENGTH, HOP_SIZE, N_FEATURES
     global EPOCHS, BATCH_SIZE, VALIDATION_FREQ
+    global EVAL_DURATION_s
     # define plot flags
-    NEED_PLOT = False
+    NEED_PLOT = True
+    # define training, testing, tflite flags
+    NEED_TRAIN = True
+    NEED_TEST = True
+    NEED_TFLITE = True
 
     # define audio parameters
     SAMPLE_RATE = 44100
 
     # Training hyper parameters
-    IO_SEQ_LENGTH = 4096
-    HOP_SIZE = 1024
+    IO_SEQ_LENGTH = 1024
+    HOP_SIZE = 128
     N_FEATURES = 3
     BATCH_SIZE = 32
     EPOCHS = 500
-    VALIDATION_FREQ = 3
+    VALIDATION_FREQ = 5
+
+    # Evaluation params
+    EVAL_DURATION_s = 0.01
 
     # Define signal keys
     input_signal_keys = ["signal_in", "cutoff", "resonance"]
@@ -270,19 +396,32 @@ def main():
         if not os.path.exists(my_pkl_filenames[i]):
             # Create pickle dictionary
             create_pkl_audio_dataset(my_audio_dirs[i], pkl_dir, my_pkl_filenames[i], keynames=signal_keys, sr=SAMPLE_RATE)
+    savedmodel_dir = None
 
-    # Train, evaluate and save RNN stateless model
-    savedmodel_dir = training_routine(pkl_dir, input_signal_keys, output_signal_keys,
-                                    optimizer=optimizer_call(lr=1e-3), loss_metric="mse",
-                                    audio_out_dir=audio_out_dir, model_root_save_dir=model_root_save_dir,
-                                    )
+    if NEED_TRAIN:
+        # Train, evaluate and save many2many RNN model
+        savedmodel_dir = training_routine(pkl_dir, input_signal_keys, output_signal_keys,
+                                        optimizer=optimizer_call(lr=1e-3), loss_metric="mse",
+                                        audio_out_dir=audio_out_dir, model_root_save_dir=model_root_save_dir,
+                                        )
 
+    # If no training step, specify manually path where to load model
+    if savedmodel_dir is None:
+        savedmodel_dir = os.path.join(model_root_save_dir, "2020-10-30_17-34-41")
 
+    if NEED_TEST:
+        # Load pretrained model, convert it to one2one (i.e. sample-wise real-time) RNN model, evaluate & save it
+        testing_routine(savedmodel_dir, pkl_dir,
+                        input_signal_keys, output_signal_keys,
+                        audio_out_dir=audio_out_dir, test_pkl_filename="evaluation.pkl",
+                        )
 
-    testing_routine(savedmodel_dir, pkl_dir,
-                    input_signal_keys, output_signal_keys,
-                    audio_out_dir=audio_out_dir, test_pkl_filename="evaluation.pkl",
-                    )
+    if NEED_TFLITE:
+        # Load one2one RNN model, convert to tflite format, evaluate & save it
+        tflite_routine(savedmodel_dir, pkl_dir,
+                        input_signal_keys, output_signal_keys,
+                        test_pkl_filename="evaluation.pkl",
+                        )
 
 
 if __name__ == "__main__":

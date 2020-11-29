@@ -9,6 +9,7 @@ training_utils.py
 Module gathering useful classes and functions for Machine Learning model training.
 """
 import os
+import numpy as np
 
 # Custom imports
 from dataset_utils import get_dict_from_pkl, stack_array_from_dict_lastaxis
@@ -103,17 +104,21 @@ class KerasModelHandler(ModelHandler):
         self.optimizer = keras_optim
         self.loss = keras_loss
 
-    def train_model(self, keras_model, epochs=50, batch_size=32, val_freq=3):
+    def train_model(self, keras_model, epochs=50, batch_size=32, val_freq=3, sample_weight=None):
         """
         Compile provided keras_model with selected optimizer andstart training
         Will work only if need_training flag is True. Else it will throw an error.
         """
 
         keras_model.compile(loss=self.loss, optimizer=self.optimizer)
+
+        # train model
         training_state = keras_model.fit(self.x_train, self.y_train, shuffle=True,
                                     epochs=epochs, batch_size=batch_size,
                                     validation_data=(self.x_val, self.y_val),
+                                    # validation_split=0.1,
                                     validation_freq=val_freq,
+                                    sample_weight=sample_weight
                                     )
         return training_state
 
@@ -128,6 +133,16 @@ class KerasModelHandler(ModelHandler):
             self.x_eval = self.x_eval[start_end_idxs[0]:start_end_idxs[1]]
             self.y_eval = self.y_eval[start_end_idxs[0]:start_end_idxs[1]]
         if need_plot:
+            # # Predict output of training dataset inputs from trained model
+            # predicted_output = self.predict(keras_model, self.x_train, batch_size=batch_size)
+            # array_dict = {}
+            # # Append signals from train dict
+            # for key in self.train_dict.keys():
+            #     array_dict[key] = self.train_dict[key][:]
+            # # Append predictions in dict
+            # array_dict["predictions"] = predicted_output
+            # plot_by_key(array_dict, array_dict.keys(), title="Model predictions on training set")
+            # Predict output of evaluation dataset inputs from trained model
             predicted_output = self.predict(keras_model, self.x_eval, batch_size=batch_size)
             array_dict = {}
             # Append signals from evaluation dict
@@ -135,7 +150,7 @@ class KerasModelHandler(ModelHandler):
                 array_dict[key] = self.eval_dict[key][:]
             # Append predictions in dict
             array_dict["predictions"] = predicted_output
-            plot_by_key(array_dict, array_dict.keys(), title="Model evaluation")
+            plot_by_key(array_dict, array_dict.keys(), title="Model predictions on evaluation set")
         return keras_model.evaluate(self.x_eval, self.y_eval, batch_size=batch_size)
 
     def predict(self, keras_model, x_inputs, batch_size=None):
@@ -191,6 +206,27 @@ class KerasBufferizedNNHandler(KerasModelHandler):
             # For RNN split the groundtruth data into chunks of length OUT_SEQ_LENGTH and HOP_SIZE
             self.y_val = bufferize_array(self.y_val, self.OUTPUT_LENGTH, hop_size=self.HOP_SIZE,
                                                 start_index=self.INPUT_LENGTH - self.OUTPUT_LENGTH)
+
+    def train_model(self, keras_model, epochs=50, batch_size=32, val_freq=3, need_sample_weight=False):
+        """
+        Provides sample weights to parent method.
+        """
+
+        if need_sample_weight:
+            # prepare sample weights
+            # sample_weight = np.ones(self.x_train.shape, dtype=self.x_train.dtype)
+            # sample_weight[:, 0:self.INPUT_LENGTH // 2, :] = 0.
+            sample_weight = np.ones(self.x_train.shape[0:2], dtype=self.x_train.dtype)
+            sample_weight[:, 0:self.INPUT_LENGTH // 2] = 0.
+        else:
+            sample_weight = None
+
+        return super(KerasBufferizedNNHandler, self).train_model(keras_model,
+                                                                epochs=epochs,
+                                                                batch_size=batch_size,
+                                                                val_freq=val_freq,
+                                                                sample_weight=sample_weight
+                                                                )
 
     def evaluate_model(self, keras_model, batch_size=None, start_end_idxs=None, need_plot=False):
         """

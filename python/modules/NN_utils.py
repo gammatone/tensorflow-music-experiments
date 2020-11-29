@@ -16,11 +16,11 @@ from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import Input
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Conv1D, Conv1DTranspose, MaxPool1D
-from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import LSTM, GRU, SimpleRNN
 from tensorflow.keras.layers import BatchNormalization, Dropout
 from tensorflow.keras.layers import Add, Flatten, Reshape
 from tensorflow.keras.layers import Activation
-from tensorflow.keras.layers import TimeDistributed
+from tensorflow.keras.layers import TimeDistributed, RepeatVector
 
 
 def optimizer_call(lr=0.001):
@@ -51,11 +51,43 @@ def vanilla_LSTM(in_seq_length, out_seq_length, n_features,
             - https://magenta.tensorflow.org/blog/2017/06/01/waybackprop/
 	"""
 	in_NN = Input(batch_input_shape=(batch_size, in_seq_length, n_features))
-	x = TimeDistributed(Dense(4))(in_NN)
-	x = LSTM(16, stateful=stateful, return_sequences=True)(x)
+	# x = TimeDistributed(Dense(4))(in_NN)
+	# x = Activation('tanh')(x)
+	x = LSTM(8, stateful=stateful, return_sequences=True)(in_NN)
+
+	# x_signal = LSTM(2, stateful=stateful, return_sequences=True)(in_NN[:,:,0:1])
+	# x_cutoff = LSTM(1, stateful=stateful, return_sequences=True)(in_NN[:,:,1:2])
+	# x_res = LSTM(1, stateful=stateful, return_sequences=True)(in_NN[:,:,2:3])
+	# x = tf.concat([x_signal, x_cutoff, x_res], 2)
+	# x = LSTM(2, stateful=stateful, return_sequences=True)(x)
+
+	# x = LSTM(16, stateful=stateful, return_sequences=True)(x)
+	# x = TimeDistributed(Dense(4))(x)
+	# x = Activation('tanh')(x)
+	out_NN = TimeDistributed(Dense(1))(x)
+	# Create model
+	model = Model(inputs=in_NN, outputs=out_NN)
+	return model
+
+def vanilla_LSTM_AE(in_seq_length, out_seq_length, n_features,
+				stateful=False,
+				batch_size=None):
+	"""
+	Returns a vanilla LSTM Autoencoder net declared with TF functional API.
+	"""
+	in_NN = Input(batch_input_shape=(batch_size, in_seq_length, n_features))
+	# x = TimeDistributed(Dense(4))(in_NN)
+	x = LSTM(16, stateful=stateful, return_sequences=True)(in_NN)
+	x = RepeatVector(4)(x)
 	x = TimeDistributed(Dense(4))(x)
 	x = Activation('relu')(x)
-	out_NN = TimeDistributed(Dense(4))(x)
+	x = TimeDistributed(Dense(4))(x)
+	x = Activation('relu')(x)
+	x = LSTM(16, stateful=stateful, return_sequences=True)(x)
+	# x = LSTM(16, stateful=stateful, return_sequences=True)(x)
+	# x = TimeDistributed(Dense(4))(x)
+	# x = Activation('relu')(x)
+	out_NN = TimeDistributed(Dense(1))(x)
 	# Create model
 	model = Model(inputs=in_NN, outputs=out_NN)
 	return model
