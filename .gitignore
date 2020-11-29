@@ -3,3 +3,5 @@
 data/keras_models/*
 data/audio/*
 data/pickle/*
+data/papers/*
+doc/training_benchmark/*
