@@ -16,6 +16,7 @@ import numpy as np
 
 # Custom imports
 from dsp_utils import librosa_load_wav
+from array_utils import pad_array
 
 
 def create_pkl_audio_dataset(load_dir, dest_dir, dest_filename, keynames=[], sr=44100):
@@ -35,8 +36,7 @@ def create_pkl_audio_dataset(load_dir, dest_dir, dest_filename, keynames=[], sr=
     if not os.path.exists(dest_dir):
         os.makedirs(dest_dir)
     # Save dict
-    with open(os.path.join(dest_dir, dest_filename), 'wb') as f:
-        pickle.dump(pkl_dict, f)
+    save_dict_to_pkl(pkl_dict, os.path.join(dest_dir, dest_filename))
 
 def get_dict_from_pkl(pkl_path):
     """
@@ -45,6 +45,23 @@ def get_dict_from_pkl(pkl_path):
     with open(pkl_path, 'rb') as f:
         loaded_dict = pickle.load(f)
     return loaded_dict
+
+def save_dict_to_pkl(pkl_dict, pkl_path):
+    # Save dict
+    with open(pkl_path, 'wb') as f:
+        pickle.dump(pkl_dict, f)
+
+def induce_IO_delay(pkl_path, input_signal_keys, output_signal_keys, num_samples=0):
+    """
+    Induce delay between output signals and input signals in dict.
+    i.e. input signals are zero-padded at the end whereas output signals at the beginning of the array
+    """
+    data_dict = get_dict_from_pkl(pkl_path)
+    for signal_key in input_signal_keys:
+        data_dict[signal_key] = pad_array(data_dict[signal_key], num_samples=num_samples, at_the_end=True)
+    for signal_key in output_signal_keys:
+        data_dict[signal_key] = pad_array(data_dict[signal_key], num_samples=num_samples, at_the_end=False)
+    save_dict_to_pkl(data_dict, pkl_path)
 
 def stack_array_from_dict_lastaxis(data_dict, keys):
     """
