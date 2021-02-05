@@ -13,7 +13,7 @@ import os
 
 import matplotlib.pyplot as plt
 
-def plot_by_key(arrays_dict, keys_str, title="", start_idx=0, end_idx=None):
+def plot_by_key(arrays_dict, keys_str, title="", start_idx=0, end_idx=None, xaxis_str=None, yaxis_str=None):
     """
     Plot temporal data from a numpy array dictionary.
     """
@@ -27,6 +27,10 @@ def plot_by_key(arrays_dict, keys_str, title="", start_idx=0, end_idx=None):
 
     plt.title(title)
     plt.legend(keys_str)
+    if xaxis_str is not None:
+        plt.xlabel(xaxis_str)
+    if yaxis_str is not None:
+        plt.ylabel(yaxis_str)
     plt.grid()
     plt.show()
 
