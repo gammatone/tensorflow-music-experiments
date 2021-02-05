@@ -64,3 +64,18 @@ def unbufferize_array(chunked_array, hop_size):
     for i in range(chunk_nb):
         out_array[i*hop_size:i*hop_size+chunk_size] = chunked_array[i]
     return out_array
+
+def pad_array(array_1d, num_samples=0, at_the_end=True):
+    """
+    Induce delay on array (zero pad at beginning).
+    Assuming array is rank one
+    """
+    assert len(array_1d.shape) == 1
+    padded_array = np.zeros((array_1d.shape[0] + num_samples,), dtype=array_1d.dtype)
+    if at_the_end:
+        padded_array[:array_1d.shape[0]] = array_1d[:]
+    else:
+        padded_array[num_samples:] = array_1d[:]
+
+    return padded_array
+
