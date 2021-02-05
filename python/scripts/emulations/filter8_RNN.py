@@ -40,8 +40,10 @@ sys.path.append(os.path.join(root_dir, "python/modules/"))
 
 # Custom imports
 from dataset_utils import create_pkl_audio_dataset, get_dict_from_pkl, stack_array_from_dict_lastaxis
+from dataset_utils import induce_IO_delay
 from plot_utils import plot_by_key
 from NN_utils import optimizer_call, vanilla_LSTM
+from NN_utils import custom_loss
 from dsp_utils import librosa_write_wav
 from training_utils import KerasBufferizedNNHandler
 
@@ -85,7 +87,8 @@ def get_RNN_model(in_length, out_length, n_features, stateful=False, batch_size=
     return model
 
 def training_routine(pkl_dir, input_signal_keys, output_signal_keys,
-                    optimizer=optimizer_call(lr=1e-3), loss_metric="mse",
+                    optimizer=optimizer_call(lr=1e-3),
+                    loss_metric=custom_loss,
                     audio_out_dir=None, model_root_save_dir=None,
                     pkl_filenames=("train.pkl", "validation.pkl", "evaluation.pkl")
                     ):
@@ -194,7 +197,7 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
     # Load pretrained stateless model
     for file in os.listdir(savedmodel_dir):
         if file == "trained_model":
-            pretrained_model = load_model(os.path.join(savedmodel_dir, file),)
+            pretrained_model = load_model(os.path.join(savedmodel_dir, file), custom_objects={'custom_loss': custom_loss})
             break
     # Load training infos from saved dictionary
     with open(os.path.join(savedmodel_dir, "model_infos.pkl"), "rb") as f:
@@ -202,6 +205,13 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
     # Deduce optimizer and loss metric to be able to compile real-time model later
     optimizer = model_infos_dict["optimizer"]
     loss_metric = model_infos_dict["loss_metric"]
+    # Plot losses from training
+    plot_by_key(model_infos_dict["training_losses"], 
+            ["loss", "val_loss",],
+            title="Losses value during training",
+            xaxis_str="Epochs",
+            yaxis_str="ESR"
+            )
 
     ## REAL-TIME MODEL CREATION ##
     # Define model handler for testing one-to-one stateful model:
@@ -255,6 +265,9 @@ def testing_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_ke
     tf.TensorSpec([1, 1, 3], rt_model.inputs[0].dtype))
     rt_model.save(os.path.join(savedmodel_dir,'trained_model_rt'), save_format='tf', signatures=concrete_func)
 
+    # save model in .h5 format as well
+    rt_model.save(os.path.join(savedmodel_dir,'trained_model_rt.h5'), signatures=concrete_func)
+
     return
 
 def tflite_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_keys,
@@ -270,7 +283,7 @@ def tflite_routine(savedmodel_dir, pkl_dir, input_signal_keys, output_signal_key
     # Load pretrained one2one stateful model
     for file in os.listdir(savedmodel_dir):
         if file == "trained_model_rt":
-            stateful_model = load_model(os.path.join(savedmodel_dir, file),)
+            stateful_model = load_model(os.path.join(savedmodel_dir, file), custom_objects={'custom_loss': custom_loss})
             stateful_model.reset_states()
             break
     # Load training infos from saved dictionary
@@ -344,6 +357,7 @@ def main():
     """
     global NEED_PLOT
     global SAMPLE_RATE
+    global SAMPLE_DELAY
     global IO_SEQ_LENGTH, HOP_SIZE, N_FEATURES
     global EPOCHS, BATCH_SIZE, VALIDATION_FREQ
     global EVAL_DURATION_s
@@ -356,13 +370,15 @@ def main():
 
     # define audio parameters
     SAMPLE_RATE = 44100
+    # Delay induced to the filter output
+    SAMPLE_DELAY = 0
 
     # Training hyper parameters
-    IO_SEQ_LENGTH = 1024
+    IO_SEQ_LENGTH = 4096
     HOP_SIZE = 128
     N_FEATURES = 3
     BATCH_SIZE = 32
-    EPOCHS = 500
+    EPOCHS = 1000
     VALIDATION_FREQ = 5
 
     # Evaluation params
@@ -393,21 +409,27 @@ def main():
     # Save to pickle if dataset does not exist yet
     # First make sure pickle directories exist
     for i in range(len(my_pkl_filenames)):
-        if not os.path.exists(my_pkl_filenames[i]):
-            # Create pickle dictionary
-            create_pkl_audio_dataset(my_audio_dirs[i], pkl_dir, my_pkl_filenames[i], keynames=signal_keys, sr=SAMPLE_RATE)
+        # Create pickle dictionary
+        create_pkl_audio_dataset(my_audio_dirs[i], pkl_dir, my_pkl_filenames[i], keynames=signal_keys, sr=SAMPLE_RATE)
+        # Induce IO delay if needed
+        induce_IO_delay(os.path.join(pkl_dir, my_pkl_filenames[i]),
+                        input_signal_keys,
+                        output_signal_keys,
+                        num_samples=SAMPLE_DELAY,
+                        )
     savedmodel_dir = None
 
     if NEED_TRAIN:
         # Train, evaluate and save many2many RNN model
         savedmodel_dir = training_routine(pkl_dir, input_signal_keys, output_signal_keys,
-                                        optimizer=optimizer_call(lr=1e-3), loss_metric="mse",
+                                        optimizer=optimizer_call(lr=1e-3),
+                                        loss_metric=custom_loss,
                                         audio_out_dir=audio_out_dir, model_root_save_dir=model_root_save_dir,
                                         )
 
     # If no training step, specify manually path where to load model
     if savedmodel_dir is None:
-        savedmodel_dir = os.path.join(model_root_save_dir, "2020-10-30_17-34-41")
+        savedmodel_dir = os.path.join(model_root_save_dir, "2021-01-23_09-14-04")
 
     if NEED_TEST:
         # Load pretrained model, convert it to one2one (i.e. sample-wise real-time) RNN model, evaluate & save it
